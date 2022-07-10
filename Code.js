@@ -26,17 +26,11 @@ function fetchServices_() {
 }
 
 function enrich_customers() {
-  var matched_projects = getServices();
-  match_projects(matched_projects);
+  let matched_projects = getServices();
+  matchCustomerProjects(matched_projects);
 }
 
 function getServices() {
-  let ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName("all_projects");
-  sheet.clear();
-  sheet.appendRow(["hid", "project_id", "client_id", "task_id"]);
-
-  //getConfig();
   var project_requests = []
   for (var i = 0; i < 5; i++) {
     project_requests.push(
@@ -47,31 +41,25 @@ function getServices() {
     )
   }
   var project_batches = UrlFetchApp.fetchAll(project_requests);
-  //Logger.log(project_batches);
-
-  var projects = []
-  var batch_of_projects = []
-  var project = []
   var projects_by_hid = {};
   for (const element of getHIDs()) {
-    projects_by_hid[element] = {"projects":[]}
+    projects_by_hid[element] = []
   }
   var task = {}
-  for (outer_index = 0; outer_index < project_requests.length; outer_index++) {
-    batch_of_projects = JSON.parse(project_batches[outer_index].getContentText());
+  for (outer_index = 0; outer_index < project_batches.length; outer_index++) {
+    let batch_of_projects = JSON.parse(project_batches[outer_index].getContentText());
     //Logger.log(batch_of_projects);
     for (index = 0; index < batch_of_projects.length; index++) {
-      project = batch_of_projects[index];
+      let project = batch_of_projects[index];
       for (task_index = 0; task_index < project["tasks"].length; task_index++) {
         task = project["tasks"][task_index]
         if (task["name"] in projects_by_hid) {
-          projects_by_hid[task["name"]]["client_id"] = project["clientId"];
-          projects_by_hid[task["name"]]["projects"].push({
+          projects_by_hid[task["name"]].push({
+            "client": project["clientId"],
             "sku": project["name"],
             "project": project["id"],
             "task": task["id"]
           })
-          //sheet.appendRow([project["tasks"][task_index]["name"], project["id"], project["clientId"], project["tasks"][task_index]["id"]]);
         }
       }
     }
@@ -79,20 +67,21 @@ function getServices() {
   return projects_by_hid;
 }
 
-function match_projects(matched_projects) {
+function matchCustomerProjects(matched_projects) {
   let ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName("customers");
-  var range = sheet.getDataRange();
-  var values = range.getValues();
+  let range = sheet.getDataRange();
+  let values = range.getValues();
   for (var i = 1; i < values.length; i++) {
-    values[i][4] = matched_projects[values[i][1]]["client_id"];
-    values[i][8] = JSON.stringify(matched_projects[values[i][1]]["projects"]);
+    // TODO: try and uniquely match project based on "tag_alias" aka values[i][2]
     if (matched_projects[values[i][1]]["projects"].length == 1) {
-      values[i][5] = matched_projects[values[i][1]]["projects"][0]["sku"];
-      values[i][6] = matched_projects[values[i][1]]["projects"][0]["project"];
-      values[i][7] = matched_projects[values[i][1]]["projects"][0]["task"];
+      values[i][3] = matched_projects[values[i][1]][0]["client_id"];
+      //values[i][5] = matched_projects[values[i][1]][0]["sku"];
+      values[i][4] = matched_projects[values[i][1]][0]["project"];
+      values[i][5] = matched_projects[values[i][1]][0]["task"];
+      values[i][6] = "";
     } else {
-      Logger.log(matched_projects[values[i][1]]["projects"])
+      values[i][6] = JSON.stringify(matched_projects[values[i][1]]["projects"]);
     }
   }
   range.setValues(values);
@@ -103,8 +92,8 @@ function getHIDs() {
   let ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName("customers");
   // This represents ALL the data
-  var range = sheet.getDataRange();
-  var values = range.getValues();
+  let range = sheet.getDataRange();
+  let values = range.getValues();
   // This logs the spreadsheet in CSV format with a trailing comma
   for (var i = 1; i < values.length; i++) {
     hid_array.push(Math.trunc(values[i][1]).toString())
