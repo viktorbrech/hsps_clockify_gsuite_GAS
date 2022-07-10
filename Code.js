@@ -1,6 +1,6 @@
 /**
- * This is a Google Apps Script, to be deployed within a Google sheet container.
- * Various sheets are assumed to exist, e.g. "email_sent", "customer_meetings", "customers", "config"
+ * This is a Google Apps Script, to be attached to a Google sheet (no GCP project necessary).
+ * Various sheets are assumed to exist: "email_sent", "customer_meetings", "customers", "config", "service_to_role"
  * Access to Calendar API needs to be added as a service.
  */
 
@@ -10,21 +10,18 @@ function onOpen() {
   var spreadsheet = SpreadsheetApp.getActive();
   var menuItems = [
     //{name: 'Validate content (placeholder)', functionName: 'validateSheet_'},
-    {name: 'Refresh email and calendar data', functionName: 'refreshSheet_'},
-    {name: 'Get project/client/task IDs', functionName: 'fetchServices_'}
+    { name: 'Refresh email and calendar data', functionName: 'refreshSheet_' },
+    { name: 'Get project/client/task IDs', functionName: 'fetchServices_' }
   ];
   spreadsheet.addMenu('Clockifyiable_Activities', menuItems);
 }
-
 function refreshSheet_() {
   writeRecentSentEmail();
   writeRecentMeetings();
 }
-
 function fetchServices_() {
   enrich_customers();
 }
-
 function enrich_customers() {
   let matched_projects = getServices();
   matchCustomerProjects(matched_projects);
@@ -36,7 +33,7 @@ function getServices() {
     project_requests.push(
       {
         'url': 'https://hubspot.clockify.me/api/v1/workspaces/' + config_map['clockify_workspace_id'] + '/projects?page-size=3000&archived=false&page=' + i.toString() + '&hydrated=true',
-        'headers': {'x-api-key': config_map['clockify_key']}
+        'headers': { 'x-api-key': config_map['clockify_key'] }
       }
     )
   }
@@ -48,12 +45,11 @@ function getServices() {
   var task = {}
   for (outer_index = 0; outer_index < project_batches.length; outer_index++) {
     let batch_of_projects = JSON.parse(project_batches[outer_index].getContentText());
-    //Logger.log(batch_of_projects);
     for (index = 0; index < batch_of_projects.length; index++) {
       let project = batch_of_projects[index];
       for (task_index = 0; task_index < project["tasks"].length; task_index++) {
         task = project["tasks"][task_index]
-        if (task["name"] in projects_by_hid) {
+        if (task["name"] in projects_by_hid && !projects_by_hid[task["name"]].map(x => (x["project"] == project["id"])).some(x => x)) {
           projects_by_hid[task["name"]].push({
             "client": project["clientId"],
             "sku": project["name"],
@@ -67,21 +63,66 @@ function getServices() {
   return projects_by_hid;
 }
 
-function matchCustomerProjects(matched_projects) {
+function getPriorityMap() {
   let ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName("customers");
+  let sheet = ss.getSheetByName("service_to_role");
   let range = sheet.getDataRange();
   let values = range.getValues();
+  let prio_col = undefined
+  switch (config_map["role"]) {
+    case "TC":
+      prio_col = 1; break;
+    case "IC":
+      prio_col = 2; break;
+    case "CT":
+      prio_col = 3; break;
+    case "ONB":
+      prio_col = 4; break;
+  }
+  service_priorities = {};
   for (var i = 1; i < values.length; i++) {
-    // TODO: try and uniquely match project based on "tag_alias" aka values[i][2]
-    if (matched_projects[values[i][1]]["projects"].length == 1) {
-      values[i][3] = matched_projects[values[i][1]][0]["client_id"];
-      //values[i][5] = matched_projects[values[i][1]][0]["sku"];
-      values[i][4] = matched_projects[values[i][1]][0]["project"];
-      values[i][5] = matched_projects[values[i][1]][0]["task"];
+    if (values[i][prio_col] != "") {
+      service_priorities[values[i][0]] = values[i][prio_col];
+    }
+  }
+  Logger.log(service_priorities);
+  return service_priorities;
+}
+
+function matchCustomerProjects(matched_projects) {
+  let service_priorities = getPriorityMap();
+  ss = SpreadsheetApp.getActiveSpreadsheet();
+  sheet = ss.getSheetByName("customers");
+  range = sheet.getDataRange();
+  values = range.getValues();
+  for (var i = 1; i < values.length; i++) {
+    let hid = Math.trunc(values[i][1]).toString()
+    let identified = false;
+    let chosen_index = undefined
+    for (var j = 0; j < matched_projects[hid].length; j++) {
+      if (service_priorities.hasOwnProperty(matched_projects[hid][j]["sku"])) {
+        let priority = service_priorities[matched_projects[hid][j]["sku"]]
+        if (typeof chosen_index == "undefined" || priority > service_priorities[matched_projects[hid][chosen_index]["sku"]]) {
+          chosen_index = j
+          identified = true;
+        } else if (priority == service_priorities[matched_projects[hid][chosen_index]["sku"]]) {
+          identified = false;
+          break;
+        }
+      }
+    }
+    if (identified) {
+      values[i][2] = matched_projects[hid][chosen_index]["sku"];
+      values[i][3] = matched_projects[hid][chosen_index]["client"];
+      values[i][4] = matched_projects[hid][chosen_index]["project"];
+      values[i][5] = matched_projects[hid][chosen_index]["task"];
       values[i][6] = "";
     } else {
-      values[i][6] = JSON.stringify(matched_projects[values[i][1]]["projects"]);
+      values[i][2] = "";
+      values[i][3] = "";
+      values[i][4] = "";
+      values[i][5] = "";
+      values[i][6] = JSON.stringify(matched_projects[hid]);
     }
   }
   range.setValues(values);
@@ -119,10 +160,10 @@ function getConfig() {
 function extractEmailAddresses(string) {
   // via https://www.weirdgeek.com/2019/10/regular-expression-in-google-apps-script/ and https://stackoverflow.com/questions/42407785/regex-extract-email-from-strings
   // cf. https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/match
-  var regExp = new RegExp("([a-zA-Z0-9+._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)","gi"); 
-    var results = string.match(regExp);
-    return results;
-    }
+  var regExp = new RegExp("([a-zA-Z0-9+._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)", "gi");
+  var results = string.match(regExp);
+  return results;
+}
 
 function writeRecentSentEmail() {
   // https://developers.google.com/apps-script/reference/gmail
@@ -134,10 +175,10 @@ function writeRecentSentEmail() {
   let threads = GmailApp.search("in:sent", 0, 100);
   for (var i = 0; i < threads.length; i++) {
     let messages = threads[i].getMessages();
-    for (var j = messages.length - 1; j >= 0 ; j--) {
+    for (var j = messages.length - 1; j >= 0; j--) {
       if (messages[j].getFrom().includes(config_map["sender_email"])) {
         let message_date = messages[j].getDate();
-        if ((Date.now() - message_date)/(1000*60*60) < config_map["hours"]) {
+        if ((Date.now() - message_date) / (1000 * 60 * 60) < config_map["hours"]) {
           let message_subject = messages[j].getSubject()
           if (message_subject && !message_subject.includes("out of office") && !message_subject.includes("slow to respond")) {
             let message_recipients = messages[j].getTo();
