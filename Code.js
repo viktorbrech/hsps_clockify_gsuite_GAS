@@ -1,6 +1,6 @@
 /**
  * This is a Google Apps Script, to be attached to a Google sheet (no GCP project necessary).
- * Various sheets are assumed to exist: "email_sent", "customer_meetings", "customers", "config", "service_to_role"
+ * Various sheets are assumed to exist: "email_sent", "customer_meetings", "customers", "config", "sku_prioritization"
  * Access to Calendar API needs to be added as a service.
  */
 
@@ -65,7 +65,7 @@ function getServices() {
 
 function getPriorityMap() {
   let ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName("service_to_role");
+  let sheet = ss.getSheetByName("sku_prioritization");
   let range = sheet.getDataRange();
   let values = range.getValues();
   let prio_col = undefined
@@ -85,7 +85,6 @@ function getPriorityMap() {
       service_priorities[values[i][0]] = values[i][prio_col];
     }
   }
-  Logger.log(service_priorities);
   return service_priorities;
 }
 
