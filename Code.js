@@ -10,6 +10,11 @@
 
 let config_map = getConfig()
 
+const common_tags = {
+  "call": "624bb7efa5b26c4f53265358",
+  "prep_followup": "624bb7d9a5b26c4f53265352", 
+}
+
 let headers = { 'x-api-key': config_map["clockify_key"] }
 
 let response = jsonResponse(UrlFetchApp.fetch("https://hubspot.clockify.me/api/v1/user", { headers: headers }));
@@ -22,9 +27,6 @@ let max_meeting_start_delay = 0.33 // fraction
 let max_email_minutes = 15 // minutes
 let min_email_minutes = 5 // minutes
 let max_email_overlap = 3 // minutes, should be smaller than min_email_minutes
-
-
-
 
 function onOpen() {
   var spreadsheet = SpreadsheetApp.getActive();
@@ -183,7 +185,8 @@ function domainToIds(domains) {
       domain_map[domain] = {
         client_id: values[i][3],
         project_id: values[i][4],
-        task_id: values[i][5]
+        task_id: values[i][5],
+        hid: values[i][1]
       }
     }
   }
@@ -191,23 +194,28 @@ function domainToIds(domains) {
   let matched_project = "";
   let matched_task = "";
   let matching_success = false;
+  let matched_domains = [];
   for (let domain of domains) {
     if (domain_map[domain]) {
       if (!matching_success) {
         matched_client = domain_map[domain]["client_id"]
         matched_project = domain_map[domain]["project_id"]
         matched_task = domain_map[domain]["task_id"]
+        matched_hid = domain_map[domain]["hid"]
         matching_success = true;
+        matched_domains.push(domain);
       } else if (domain_map[domain]["project_id"] != matched_project) {
         matching_success = false;
         break;
+      } else {
+        matched_domains.push(domain);
       }
     }
   }
   if (matching_success && matched_project != "" && matched_task != "") {
-    return [matched_client, matched_project, matched_task]
+    return [matched_client, matched_project, matched_task, matched_hid, matched_domains.join(";")]
   } else {
-    return [null, null, null]
+    return [null, null, null, null]
   }
 }
 
@@ -239,7 +247,7 @@ function writeRecentSentEmail() {
   let ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName("email_sent");
   sheet.clear();
-  sheet.appendRow(["send_timestamp", "subject", "recipient_domains", "client_id", "project_id", "task_id"]);
+  sheet.appendRow(["send_timestamp", "subject", "recipient_domains", "client_id", "project_id", "task_id", "hid", "matched_domains"]);
   let threads = GmailApp.search("in:sent", 0, 100);
   for (var i = 0; i < threads.length; i++) {
     let messages = threads[i].getMessages();
@@ -259,7 +267,7 @@ function writeRecentSentEmail() {
             let recipients = extractEmailAddresses(message_recipients);
             let recipient_domains = []
             for (var k = 0; k < recipients.length; k++) {
-              recipient_domain = recipients[k].split("@")[1];
+              let recipient_domain = recipients[k].split("@")[1];
               if (!recipient_domains.includes(recipient_domain) && recipient_domain != "hubspot.com" && recipient_domain != "gmail.com" && !recipient_domain.includes("google.com")) {
                 recipient_domains.push(recipient_domain);
               }
@@ -268,7 +276,7 @@ function writeRecentSentEmail() {
             if (matchedIds[1]) {
               //Logger.log(domain_map[domain])
               //Logger.log(matched_client)
-              sheet.appendRow([message_date.getTime(), sanitize(message_subject.toLowerCase()), recipient_domains.join(";"), matchedIds[0], matchedIds[1], matchedIds[2]]);
+              sheet.appendRow([message_date.getTime(), sanitize(message_subject.toLowerCase()), recipient_domains.join(";"), matchedIds[0], matchedIds[1], matchedIds[2], matchedIds[3], matchedIds[4]]);
             }
           }
         }
@@ -285,7 +293,7 @@ function writeRecentMeetings() {
   let ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName("customer_meetings");
   sheet.clear();
-  sheet.appendRow(["start_timestamp", "end_timestamp", "event_summary", "recipient_domains", "client_id", "project_id", "task_id"]);
+  sheet.appendRow(["start_timestamp", "end_timestamp", "event_summary", "recipient_domains", "client_id", "project_id", "task_id", "hid", "matched_domains"]);
   let calendarId = 'primary';
   let now = new Date();
   let now_minus_one_day = new Date(now.getTime() - (config_map["hours"] * 60 * 60 * 1000));
@@ -318,10 +326,11 @@ function writeRecentMeetings() {
             }
           }
         }
+        let matchedIds = domainToIds(event_domains);
         if (matchedIds[1] && log_event) {
           let event_start = Date.parse(event.start.dateTime);
           let event_end = Date.parse(event.end.dateTime);
-          sheet.appendRow([event_start, event_end, sanitize(event.summary.toLowerCase()), event_domains.join(";"), matchedIds[0], matchedIds[1], matchedIds[2]]);
+          sheet.appendRow([event_start, event_end, sanitize(event.summary.toLowerCase()), event_domains.join(";"), matchedIds[0], matchedIds[1], matchedIds[2], matchedIds[3], matchedIds[4]]);
         }
       }
     }
@@ -331,11 +340,6 @@ function writeRecentMeetings() {
 /**
  * This is basically a GAS rewrite of the original Python code
  */
-
-
-//TODO this needs new logic
-common_projects = {}
-common_tags = {}
 
 //////
 // Utility functions
@@ -378,7 +382,7 @@ function get_intervals(minus_x_hours = 96) {
   return intervals;
 }
 
-function sanitize(description = "lóL?") {
+function sanitize(description) {
   description = description.replace(/[^a-zA-Z0-9]/g, " ");
   while (description.includes("  ")) {
     description = description.replace("  ", " ");
@@ -388,7 +392,7 @@ function sanitize(description = "lóL?") {
 
 // section 2
 
-function log_activity(from_timestamp = 1658484324210, to_timestamp = 1658484524210, description = "dummy activity", project_id = "626ca8d4750c033c9dd60931", tag_list = ["624bb7dfa5b26c4f53265354"], billable = false, task_id = "626ca8d4750c033c9dd60933") {
+function log_activity(from_timestamp, to_timestamp, description, project_id, tag_list, billable, task_id) {
   let from_isoZ = new Date(from_timestamp).toISOString();
   let to_isoZ = new Date(to_timestamp).toISOString();
   let data = {
@@ -501,40 +505,53 @@ let engagements = {}
 //////
 
 function log_meetings(silent = false, prep_time_max = 0, post_time_max = 0) {
+  let ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName("customer_meetings");
+  let range = sheet.getDataRange();
+  let values = range.getValues();
+
+
   // TODO in GAS, exclude meetings everybody but yourself have declined (optional?)
-  for (var i = 0; i < engagements["customer_meetings"].length; i++) {
-    var row = engagements["customer_meetings"][i];
+  for (var i = 1; i < values.length; i++) {
+    var row = {
+      "start_timestamp": values[i][0],
+      "end_timestamp": values[i][1],
+      "project": values[i][5],
+      "event_summary": values[i][2],
+      "hid": values[i][7],
+      "task_id" values[i][6]
+    }
     if (row["project"] && row["project"] != "") {
       var from_timestamp = effective_meeting_times(row['start_timestamp'], row['end_timestamp'])[0];
       var to_timestamp = effective_meeting_times(row['start_timestamp'], row['end_timestamp'])[1];
-      if (from_timestamp && to_timestamp && row['project'] && row['tag']) {
-        var r = log_activity(from_timestamp, to_timestamp, "CALL " + row['event_summary'], row['project'], [row['tag'], common_tags["meeting"]], true);
+      if (from_timestamp && to_timestamp && row['project']) {
+        var r = log_activity(from_timestamp, to_timestamp, "CALL " + row['event_summary'], row['project'], [common_tags["call"]], true, row['task_id']);
         if (r) {
           if (!silent) {
-            console.log("Logged call (" + Math.round((to_timestamp - from_timestamp) / (1000 * 60)) + "min) " + "\"" + row['event_summary'] + "\" to " + row['customer_alias'].toUpperCase());
+            console.log("Logged call (" + Math.round((to_timestamp - from_timestamp) / (1000 * 60)) + "min) " + "\"" + row['event_summary'] + "\" to " + row['hid'].toUpperCase());
           }
           logged_intervals.push([from_timestamp, to_timestamp]);
           // prep_call_time
           prep_from, prep_to = effective_meeting_times(from_timestamp - prep_time_max * 1000 * 60, from_timestamp);
           if (prep_to == from_timestamp && (prep_to - prep_from) / (1000 * 60) > prep_time_max / 2) {
-            r = log_activity(prep_from, prep_to, "call_PREP " + row['event_summary'], row['project'], [row['tag'], common_tags["prep_call"]], true);
+            r = log_activity(prep_from, prep_to, "call_PREP " + row['event_summary'], row['project'], [common_tags["prep_followup"]], true, row['task_id']);
             if (!r) {
-              console.log("failed to log call_prep for " + row['customer_alias'].toUpperCase());
+              console.log("failed to log call_prep for " + row['hid'].toUpperCase());
             }
           }
           // post_call_time
           post_from, post_to = effective_meeting_times(to_timestamp, to_timestamp + post_time_max * 1000 * 60);
           if (post_from == to_timestamp && (post_to - post_from) / (1000 * 60) > post_time_max / 2) {
-            r = log_activity(post_from, post_to, "call_POST " + row['event_summary'], row['project'], [row['tag'], common_tags["post_call"]], true);
+            r = log_activity(post_from, post_to, "call_POST " + row['event_summary'], row['project'], [common_tags["prep_followup"]], true, row['task_id']);
             if (!r) {
-              console.log("failed to log post_call for " + row['customer_alias'].toUpperCase());
+              console.log("failed to log post_call for " + row['hid'].toUpperCase());
             }
           }
         } else {
-          console.log("FAILED to log call \"" + row['event_summary'] + "\" to " + row['customer_alias'].toUpperCase());
+          console.log("FAILED to log call \"" + row['event_summary'] + "\" to " + row['hid'].toUpperCase());
         }
       } else {
-        console.log("Cannot log call \"" + row['event_summary'] + "\" to " + row['customer_alias'].toUpperCase() + " (coincides with logged activity)");
+        console.log("Cannot log call \"" + row['event_summary'] + "\" to " + row['hid'].toUpperCase() + " (coincides with logged activity)");
       }
     }
   }
@@ -542,24 +559,34 @@ function log_meetings(silent = false, prep_time_max = 0, post_time_max = 0) {
 
 function log_email(silent = false) {
   // TODO truncate subject line when logging activity
-  for (var i = 0; i < engagements["email_sent"].length; i++) {
-    var row = engagements["email_sent"][i];
+  let ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName("customer_meetings");
+  let range = sheet.getDataRange();
+  let values = range.getValues();
+  // TODO, exclude meetings everybody but yourself have declined (optional?)
+  for (var i = 1; i < values.length; i++) {
+    var row = {
+      "send_timestamp": values[i][0],
+      "project": values[i][4],
+      "subject": values[i][1],
+      "hid": values[i][6],
+      "task_id" values[i][5]
+    }
     if (row["project"] && row["project"] != "") {
       var from_timestamp, to_timestamp = effective_email_times(row['send_timestamp']);
       if (from_timestamp && to_timestamp && row['project'] && row['tag']) {
-        var r = log_activity(from_timestamp, to_timestamp, "EMAIL " + row['subject'], row['project'], [row['tag'], common_tags["email"]], true);
+        var r = log_activity(from_timestamp, to_timestamp, "EMAIL " + row['subject'], row['project'], [common_tags["prep_followup"]], true, row['task_id']);
         if (r) {
           if (!silent) {
-            console.log("Logged email (" + Math.round((to_timestamp - from_timestamp) / (1000 * 60)) + "min) " + "\"" + row['subject'] + "\" to " + row['customer_alias'].toUpperCase());
+            console.log("Logged email (" + Math.round((to_timestamp - from_timestamp) / (1000 * 60)) + "min) " + "\"" + row['subject'] + "\" to " + row['hid'].toUpperCase());
           }
           logged_intervals.push([from_timestamp, to_timestamp]);
         } else {
-          console.log("FAILED to log email \"" + row['subject'] + "\" to " + row['customer_alias'].toUpperCase());
+          console.log("FAILED to log email \"" + row['subject'] + "\" to " + row['hid'].toUpperCase());
         }
       } else {
-        console.log("Cannot log email \"" + row['subject'] + "\" to " + row['customer_alias'].toUpperCase() + " (coincides with logged activity)");
+        console.log("Cannot log email \"" + row['subject'] + "\" to " + row['hid'].toUpperCase() + " (coincides with logged activity)");
       }
     }
   }
 }
-
