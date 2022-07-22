@@ -538,7 +538,7 @@ function log_meetings(silent = false, prep_time_max = 0, post_time_max = 0) {
         var r = log_activity(from_timestamp, to_timestamp, "CALL " + row['event_summary'], row['project'], [common_tags["call"]], true, row['task_id']);
         if (r) {
           if (!silent) {
-            console.log("Logged call (" + Math.round((to_timestamp - from_timestamp) / (1000 * 60)) + "min) " + "\"" + row['event_summary'] + "\" to " + row['hid'].toUpperCase());
+            console.log("Logged call (" + Math.round((to_timestamp - from_timestamp) / (1000 * 60)) + "min) " + "\"" + row['event_summary'] + "\" to " + row['hid'].toString());
           }
           logged_intervals.push([from_timestamp, to_timestamp]);
           // prep_call_time
@@ -546,7 +546,7 @@ function log_meetings(silent = false, prep_time_max = 0, post_time_max = 0) {
           if (prep_to == from_timestamp && (prep_to - prep_from) / (1000 * 60) > prep_time_max / 2) {
             r = log_activity(prep_from, prep_to, "call_PREP " + row['event_summary'], row['project'], [common_tags["prep_followup"]], true, row['task_id']);
             if (!r) {
-              console.log("failed to log call_prep for " + row['hid'].toUpperCase());
+              console.log("failed to log call_prep for " + row['hid'].toString());
             }
           }
           // post_call_time
@@ -554,14 +554,14 @@ function log_meetings(silent = false, prep_time_max = 0, post_time_max = 0) {
           if (post_from == to_timestamp && (post_to - post_from) / (1000 * 60) > post_time_max / 2) {
             r = log_activity(post_from, post_to, "call_POST " + row['event_summary'], row['project'], [common_tags["prep_followup"]], true, row['task_id']);
             if (!r) {
-              console.log("failed to log post_call for " + row['hid'].toUpperCase());
+              console.log("failed to log post_call for " + row['hid'].toString());
             }
           }
         } else {
-          console.log("FAILED to log call \"" + row['event_summary'] + "\" to " + row['hid'].toUpperCase());
+          console.log("FAILED to log call \"" + row['event_summary'] + "\" to " + row['hid'].toString());
         }
       } else {
-        console.log("Cannot log call \"" + row['event_summary'] + "\" to " + row['hid'].toUpperCase() + " (coincides with logged activity)");
+        console.log("Cannot log call \"" + row['event_summary'] + "\" to " + row['hid'].toString() + " (coincides with logged activity)");
       }
     }
   }
@@ -588,14 +588,14 @@ function log_email(silent = false) {
         var r = log_activity(from_timestamp, to_timestamp, "EMAIL " + row['subject'], row['project'], [common_tags["prep_followup"]], true, row['task_id']);
         if (r) {
           if (!silent) {
-            console.log("Logged email (" + Math.round((to_timestamp - from_timestamp) / (1000 * 60)) + "min) " + "\"" + row['subject'] + "\" to " + row['hid'].toUpperCase());
+            console.log("Logged email (" + Math.round((to_timestamp - from_timestamp) / (1000 * 60)) + "min) " + "\"" + row['subject'] + "\" to " + row['hid'].toString());
           }
           logged_intervals.push([from_timestamp, to_timestamp]);
         } else {
-          console.log("FAILED to log email \"" + row['subject'] + "\" to " + row['hid'].toUpperCase());
+          console.log("FAILED to log email \"" + row['subject'] + "\" to " + row['hid'].toString());
         }
       } else {
-        console.log("Cannot log email \"" + row['subject'] + "\" to " + row['hid'].toUpperCase() + " (coincides with logged activity)");
+        console.log("Cannot log email \"" + row['subject'] + "\" to " + row['hid'].toString() + " (coincides with logged activity)");
       }
     }
   }
