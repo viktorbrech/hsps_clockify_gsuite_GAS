@@ -32,7 +32,8 @@ function onOpen() {
   var spreadsheet = SpreadsheetApp.getActive();
   var menuItems = [
     //{name: 'Validate content (placeholder)', functionName: 'validateSheet_'},
-    { name: 'Refresh email and calendar data', functionName: 'refreshSheet_' },
+    { name: 'Refresh email and calendar logs', functionName: 'refreshSheet_' },
+    { name: 'Write logs to Clockify', functionName: 'logActivities_' },
     { name: 'Get project/client/task IDs', functionName: 'fetchServices_' }
   ];
   spreadsheet.addMenu('Clockifyiable_Activities', menuItems);
@@ -41,6 +42,15 @@ function onOpen() {
 function refreshSheet_() {
   writeRecentSentEmail();
   writeRecentMeetings();
+}
+
+function logActivities_() {
+  log_all_activities();
+}
+
+function log_all_activities() {
+  log_meetings();
+  log_email();
 }
 
 function fetchServices_() {
