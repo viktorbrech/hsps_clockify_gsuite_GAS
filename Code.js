@@ -532,8 +532,8 @@ function log_meetings(silent = false, prep_time_max = 0, post_time_max = 0) {
       "task_id": values[i][6]
     }
     if (row["project"] && row["project"] != "") {
-      var from_timestamp = effective_meeting_times(row['start_timestamp'], row['end_timestamp'])[0];
-      var to_timestamp = effective_meeting_times(row['start_timestamp'], row['end_timestamp'])[1];
+      let from_timestamp, to_timestamp;
+      [from_timestamp, to_timestamp] = effective_meeting_times(row['start_timestamp'], row['end_timestamp']);
       if (from_timestamp && to_timestamp && row['project']) {
         var r = log_activity(from_timestamp, to_timestamp, "CALL " + row['event_summary'], row['project'], [common_tags["call"]], true, row['task_id']);
         if (r) {
@@ -542,7 +542,8 @@ function log_meetings(silent = false, prep_time_max = 0, post_time_max = 0) {
           }
           logged_intervals.push([from_timestamp, to_timestamp]);
           // prep_call_time
-          prep_from, prep_to = effective_meeting_times(from_timestamp - prep_time_max * 1000 * 60, from_timestamp);
+          let prep_from, prep_to;
+          [prep_from, prep_to] = effective_meeting_times(from_timestamp - prep_time_max * 1000 * 60, from_timestamp);
           if (prep_to == from_timestamp && (prep_to - prep_from) / (1000 * 60) > prep_time_max / 2) {
             r = log_activity(prep_from, prep_to, "call_PREP " + row['event_summary'], row['project'], [common_tags["prep_followup"]], true, row['task_id']);
             if (!r) {
@@ -550,7 +551,8 @@ function log_meetings(silent = false, prep_time_max = 0, post_time_max = 0) {
             }
           }
           // post_call_time
-          post_from, post_to = effective_meeting_times(to_timestamp, to_timestamp + post_time_max * 1000 * 60);
+          let post_from, post_to;
+          [post_from, post_to] = effective_meeting_times(to_timestamp, to_timestamp + post_time_max * 1000 * 60);
           if (post_from == to_timestamp && (post_to - post_from) / (1000 * 60) > post_time_max / 2) {
             r = log_activity(post_from, post_to, "call_POST " + row['event_summary'], row['project'], [common_tags["prep_followup"]], true, row['task_id']);
             if (!r) {
@@ -583,7 +585,8 @@ function log_email(silent = false) {
       "task_id": values[i][5]
     }
     if (row["project"] && row["project"] != "") {
-      var from_timestamp, to_timestamp = effective_email_times(row['send_timestamp']);
+      let from_timestamp, to_timestamp;
+      [from_timestamp, to_timestamp] = effective_email_times(row['send_timestamp']);
       if (from_timestamp && to_timestamp && row['project'] && row['tag']) {
         var r = log_activity(from_timestamp, to_timestamp, "EMAIL " + row['subject'], row['project'], [common_tags["prep_followup"]], true, row['task_id']);
         if (r) {
