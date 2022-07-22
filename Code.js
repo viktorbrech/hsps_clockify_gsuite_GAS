@@ -1,10 +1,30 @@
 /**
- * This is a Google Apps Script, to be attached to a Google sheet (no GCP project necessary).
- * Various sheets are assumed to exist: "email_sent", "customer_meetings", "customers", "config", "sku_prioritization"
+ * This is a Google Apps Script, to be deployed within a Google sheet container.
+ * Various sheets are assumed to exist, e.g. "email_sent", "customer_meetings", "customers", "config"
  * Access to Calendar API needs to be added as a service.
  */
 
+/**
+ * This is basically adapted from the v1 GAS code, intended to work with a GAS-translated version of the original Python code below
+ */
+
 let config_map = getConfig()
+
+let headers = { 'x-api-key': config_map["clockify_key"] }
+
+let response = jsonResponse(UrlFetchApp.fetch("https://hubspot.clockify.me/api/v1/user", { headers: headers }));
+config_map["user_id"] = response["id"];
+config_map["workspace_id"] = response["defaultWorkspace"];
+
+let min_adjusted_meeting_length = 0.5 // fraction
+let max_meeting_start_delay = 0.33 // fraction
+
+let max_email_minutes = 15 // minutes
+let min_email_minutes = 5 // minutes
+let max_email_overlap = 3 // minutes, should be smaller than min_email_minutes
+
+
+
 
 function onOpen() {
   var spreadsheet = SpreadsheetApp.getActive();
@@ -15,13 +35,16 @@ function onOpen() {
   ];
   spreadsheet.addMenu('Clockifyiable_Activities', menuItems);
 }
+
 function refreshSheet_() {
   writeRecentSentEmail();
   writeRecentMeetings();
 }
+
 function fetchServices_() {
   enrich_customers();
 }
+
 function enrich_customers() {
   let matched_projects = getServices();
   matchCustomerProjects(matched_projects);
@@ -32,7 +55,7 @@ function getServices() {
   for (var i = 0; i < 5; i++) {
     project_requests.push(
       {
-        'url': 'https://hubspot.clockify.me/api/v1/workspaces/' + config_map['clockify_workspace_id'] + '/projects?page-size=3000&archived=false&page=' + i.toString() + '&hydrated=true',
+        'url': 'https://hubspot.clockify.me/api/v1/workspaces/' + config_map["workspace_id"] + '/projects?page-size=3000&archived=false&page=' + i.toString() + '&hydrated=true',
         'headers': { 'x-api-key': config_map['clockify_key'] }
       }
     )
@@ -45,6 +68,7 @@ function getServices() {
   var task = {}
   for (outer_index = 0; outer_index < project_batches.length; outer_index++) {
     let batch_of_projects = JSON.parse(project_batches[outer_index].getContentText());
+    //Logger.log(batch_of_projects);
     for (index = 0; index < batch_of_projects.length; index++) {
       let project = batch_of_projects[index];
       for (task_index = 0; task_index < project["tasks"].length; task_index++) {
@@ -142,6 +166,27 @@ function getHIDs() {
   return hid_array;
 }
 
+function domainToIds() {
+  let hid_array = []
+  let ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName("customers");
+  let range = sheet.getDataRange();
+  let values = range.getValues();
+  let domain_map = {}
+  for (var i = 1; i < values.length; i++) {
+    let domains = values[i][0].replace(";", ",").split(",")
+    for (let j = 0; j < domains.length; j++) {
+      let domain = domains[j].trim();
+      domain_map[domain] = {
+        client_id: values[i][3],
+        project_id: values[i][4],
+        task_id: values[i][5]
+      }
+    }
+  }
+  return domain_map;
+}
+
 function getConfig() {
   let config_map = {}
   let ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -170,7 +215,7 @@ function writeRecentSentEmail() {
   let ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName("email_sent");
   sheet.clear();
-  sheet.appendRow(["send_timestamp", "subject", "recipient_domains"]);
+  sheet.appendRow(["send_timestamp", "subject", "recipient_domains", "client_id", "project_id", "task_id"]);
   let threads = GmailApp.search("in:sent", 0, 100);
   for (var i = 0; i < threads.length; i++) {
     let messages = threads[i].getMessages();
@@ -179,7 +224,9 @@ function writeRecentSentEmail() {
         let message_date = messages[j].getDate();
         if ((Date.now() - message_date) / (1000 * 60 * 60) < config_map["hours"]) {
           let message_subject = messages[j].getSubject()
+          //TODO make the following exclusion strings part of the config sheet
           if (message_subject && !message_subject.includes("out of office") && !message_subject.includes("slow to respond")) {
+            //Logger.log(message_subject)
             let message_recipients = messages[j].getTo();
             let message_cc = messages[j].getCc();
             if (message_cc.length > 0) {
@@ -193,8 +240,29 @@ function writeRecentSentEmail() {
                 recipient_domains.push(recipient_domain);
               }
             }
-            if (recipient_domains.length > 0) {
-              sheet.appendRow([message_date.getTime(), message_subject, recipient_domains.join(";")]);
+            //Logger.log(recipient_domains)
+            let matched_client = undefined;
+            let matched_project = undefined;
+            let matched_task = undefined;
+            let domain_map = domainToIds();
+            let matching_success = false;
+            for (domain of recipient_domains) {
+              if (domain_map[domain]) {
+                if (!matching_success) {
+                  matched_client = domain_map[domain]["client_id"]
+                  matched_project = domain_map[domain]["project_id"]
+                  matched_task = domain_map[domain]["task_id"]
+                  matching_success = true;
+                } else if (domain_map[domain]["project_id"] != matched_project) {
+                  matching_success = false;
+                  break;
+                }
+              }
+            }
+            if (matching_success) {
+              //Logger.log(domain_map[domain])
+              //Logger.log(matched_client)
+              sheet.appendRow([message_date.getTime(), sanitize(message_subject.toLowerCase()), recipient_domains.join(";"), matched_client, matched_project, matched_task]);
             }
           }
         }
@@ -250,9 +318,272 @@ function writeRecentMeetings() {
         if (log_event) {
           let event_start = Date.parse(event.start.dateTime);
           let event_end = Date.parse(event.end.dateTime);
-          sheet.appendRow([event_start, event_end, event.summary, event_domains.join(";")]);
+          sheet.appendRow([event_start, event_end, sanitize(event.summary.toLowerCase()), event_domains.join(";")]);
         }
       }
     }
   }
 }
+
+/**
+ * This is basically a GAS rewrite of the original Python code
+ */
+
+
+//TODO this needs new logic
+
+function jsonResponse(response) {
+  return JSON.parse(response.getContentText());
+}
+
+common_projects = {}
+common_tags = {}
+
+//////
+// Utility functions
+//////
+
+function get_intervals(minus_x_hours = 96) {
+  let lower_bound = Math.floor(Date.now() - minus_x_hours * 60 * 60 * 1000);
+  //Logger.log(lower_bound)
+  var newDate = new Date();
+  newDate.setTime(lower_bound);
+  dateString = newDate.toUTCString();
+  //Logger.log(dateString)
+  let page_size = 0;
+  let completed = false;
+  let intervals = [];
+  while (page_size < 1000 && completed == false) {
+    page_size += 50;
+    let url = "https://hubspot.clockify.me/api/v1/workspaces/" + config_map["workspace_id"] + "/user/" + config_map["user_id"] + "/time-entries?page-size=" + page_size
+    let r = UrlFetchApp.fetch(url, { headers: headers });
+    my_time_entries = jsonResponse(r);
+    for (time_entry of my_time_entries) {
+      //Logger.log(time_entry)
+      //assert time_entry["timeInterval"]["start"][-1] == "Z";
+      time_start = Date.parse(time_entry["timeInterval"]["start"]);
+      time_end = Date.parse(time_entry["timeInterval"]["end"]);
+      //Logger.log(time_end-time_start)
+      if (time_end > lower_bound) {
+        intervals.push([time_start, time_end]);
+      } else {
+        completed = true;
+        break;
+      }
+    }
+  }
+  //Logger.log(intervals);
+  return intervals;
+}
+
+/**
+ * No longer needed I think
+function map_domain(domain) {
+    try {
+        row = domain_dict[domain];
+        return [row["project_id"], row["tag_id"], row["customer_alias"]];
+    } catch (KeyError) {
+        console.log(domain + " not found in customer_data");
+        return [null, null, null];
+    }
+}
+ 
+function map_domain_csv(domain_csv="") {
+    domains = domain_csv.split(";");
+    Logger.log(domains.length)
+    for (domain of domains) {
+      Logger.log(domain)
+        [project, tag, customer_alias] = map_domain(domain);
+        if (project && tag) {
+            return project, tag, customer_alias;
+        }
+    }
+    return null, null, null;
+}
+ */
+
+function sanitize(description = "lóL?") {
+  description = description.replace(/[^a-zA-Z0-9]/g, " ");
+  while (description.includes("  ")) {
+    description = description.replace("  ", " ");
+  }
+  return description.trim();
+}
+
+// section 2
+
+function log_activity(from_timestamp = 1658484324210, to_timestamp = 1658484524210, description = "dummy activity", project_id = "626ca8d4750c033c9dd60931", tag_list = ["624bb7dfa5b26c4f53265354"], billable = false, task_id = "626ca8d4750c033c9dd60933") {
+  let from_isoZ = new Date(from_timestamp).toISOString();
+  let to_isoZ = new Date(to_timestamp).toISOString();
+  let data = {
+    "start": from_isoZ,
+    "end": to_isoZ,
+    "billable": billable,
+    "projectId": project_id.toString(),
+    "tagIds": tag_list,
+    "description": description,
+    "taskId": task_id.toString()
+  };
+  let options = {
+    'method': 'post',
+    'contentType': 'application/json',
+    'payload': JSON.stringify(data),
+    'headers': headers
+  };
+  let response = UrlFetchApp.fetch("https://hubspot.clockify.me/api/v1/workspaces/" + config_map["workspace_id"] + "/time-entries", options);
+  if (response.getResponseCode() == 201) {
+    return true;
+  } else {
+    Logger.log("failed to create time entry (" + description + ")");
+    return false;
+  }
+}
+
+function effective_meeting_times(from_timestamp, to_timestamp) {
+  from_timestamp = parseInt(from_timestamp);
+  to_timestamp = parseInt(to_timestamp);
+  skip = false;
+  original_length = to_timestamp - from_timestamp;
+  latest_start_date = from_timestamp + original_length * max_meeting_start_delay;
+  for (var i = 0; i < logged_intervals.length; i++) {
+    if (latest_start_date > logged_intervals[i][1] > from_timestamp) {
+      from_timestamp = logged_intervals[i][1];
+    }
+  }
+  for (var i = 0; i < logged_intervals.length; i++) {
+    if (to_timestamp < logged_intervals[i][0] < to_timestamp) {
+      to_timestamp = logged_intervals[i][0];
+    }
+  }
+  if ((to_timestamp - from_timestamp) < original_length * min_adjusted_meeting_length) {
+    skip = true;
+  }
+  for (var i = 0; i < logged_intervals.length; i++) {
+    if (logged_intervals[i][0] < to_timestamp && logged_intervals[i][1] > from_timestamp) {
+      skip = true;
+    }
+  }
+  if (skip) {
+    return [null, null];
+  } else {
+    return [from_timestamp, to_timestamp];
+  }
+}
+
+function effective_email_times(send_timestamp) {
+  send_timestamp = parseInt(send_timestamp);
+  skip = false;
+  upper_bound = send_timestamp;
+  for (var i = 0; i < logged_intervals.length; i++) {
+    if (logged_intervals[i][1] > send_timestamp && logged_intervals[i][0] < upper_bound) {
+      upper_bound = logged_intervals[i][0];
+    }
+  }
+  upper_bound = Math.min(upper_bound, send_timestamp);
+  for (var i = 0; i < logged_intervals.length; i++) {
+    lower_bound = upper_bound - max_email_minutes * 60 * 1000;
+    if (logged_intervals[i][0] < upper_bound && logged_intervals[i][1] > lower_bound) {
+      lower_bound = logged_intervals[i][1];
+    }
+  }
+  if ((upper_bound - lower_bound) * 60 * 1000 < min_email_minutes) {
+    skip = true;
+  }
+  if ((send_timestamp - upper_bound) * 60 * 1000 > max_email_overlap) {
+    skip = true;
+  }
+  // this loop may be redundant, not sure
+  for (var i = 0; i < logged_intervals.length; i++) {
+    if (logged_intervals[i][0] < upper_bound && logged_intervals[i][1] > lower_bound) {
+      skip = true;
+    }
+  }
+  if (skip) {
+    return [null, null];
+  } else {
+    return [lower_bound, upper_bound];
+  }
+}
+
+//////
+// Read customer data from HubDB
+//////
+
+let domain_dict = {}
+let customer_dict = {}
+
+
+//////
+// data loading
+//////
+
+let logged_intervals = get_intervals(36)
+let engagements = {}
+
+//////
+// external interface
+//////
+
+function log_meetings(silent = false, prep_time_max = 0, post_time_max = 0) {
+  // TODO in GAS, exclude meetings everybody but yourself have declined (optional?)
+  for (var i = 0; i < engagements["customer_meetings"].length; i++) {
+    var row = engagements["customer_meetings"][i];
+    if (row["project"] && row["project"] != "") {
+      var from_timestamp = effective_meeting_times(row['start_timestamp'], row['end_timestamp'])[0];
+      var to_timestamp = effective_meeting_times(row['start_timestamp'], row['end_timestamp'])[1];
+      if (from_timestamp && to_timestamp && row['project'] && row['tag']) {
+        var r = log_activity(from_timestamp, to_timestamp, "CALL " + row['event_summary'], row['project'], [row['tag'], common_tags["meeting"]], true);
+        if (r) {
+          if (!silent) {
+            console.log("Logged call (" + Math.round((to_timestamp - from_timestamp) / (1000 * 60)) + "min) " + "\"" + row['event_summary'] + "\" to " + row['customer_alias'].toUpperCase());
+          }
+          logged_intervals.push([from_timestamp, to_timestamp]);
+          // prep_call_time
+          prep_from, prep_to = effective_meeting_times(from_timestamp - prep_time_max * 1000 * 60, from_timestamp);
+          if (prep_to == from_timestamp && (prep_to - prep_from) / (1000 * 60) > prep_time_max / 2) {
+            r = log_activity(prep_from, prep_to, "call_PREP " + row['event_summary'], row['project'], [row['tag'], common_tags["prep_call"]], true);
+            if (!r) {
+              console.log("failed to log call_prep for " + row['customer_alias'].toUpperCase());
+            }
+          }
+          // post_call_time
+          post_from, post_to = effective_meeting_times(to_timestamp, to_timestamp + post_time_max * 1000 * 60);
+          if (post_from == to_timestamp && (post_to - post_from) / (1000 * 60) > post_time_max / 2) {
+            r = log_activity(post_from, post_to, "call_POST " + row['event_summary'], row['project'], [row['tag'], common_tags["post_call"]], true);
+            if (!r) {
+              console.log("failed to log post_call for " + row['customer_alias'].toUpperCase());
+            }
+          }
+        } else {
+          console.log("FAILED to log call \"" + row['event_summary'] + "\" to " + row['customer_alias'].toUpperCase());
+        }
+      } else {
+        console.log("Cannot log call \"" + row['event_summary'] + "\" to " + row['customer_alias'].toUpperCase() + " (coincides with logged activity)");
+      }
+    }
+  }
+}
+
+function log_email(silent = false) {
+  // TODO truncate subject line when logging activity
+  for (var i = 0; i < engagements["email_sent"].length; i++) {
+    var row = engagements["email_sent"][i];
+    if (row["project"] && row["project"] != "") {
+      var from_timestamp, to_timestamp = effective_email_times(row['send_timestamp']);
+      if (from_timestamp && to_timestamp && row['project'] && row['tag']) {
+        var r = log_activity(from_timestamp, to_timestamp, "EMAIL " + row['subject'], row['project'], [row['tag'], common_tags["email"]], true);
+        if (r) {
+          if (!silent) {
+            console.log("Logged email (" + Math.round((to_timestamp - from_timestamp) / (1000 * 60)) + "min) " + "\"" + row['subject'] + "\" to " + row['customer_alias'].toUpperCase());
+          }
+          logged_intervals.push([from_timestamp, to_timestamp]);
+        } else {
+          console.log("FAILED to log email \"" + row['subject'] + "\" to " + row['customer_alias'].toUpperCase());
+        }
+      } else {
+        console.log("Cannot log email \"" + row['subject'] + "\" to " + row['customer_alias'].toUpperCase() + " (coincides with logged activity)");
+      }
+    }
+  }
+}
+
