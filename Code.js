@@ -62,16 +62,16 @@ function getServices() {
   }
   var project_batches = UrlFetchApp.fetchAll(project_requests);
   var projects_by_hid = {};
-  for (const element of getHIDs()) {
+  for (let element of getHIDs()) {
     projects_by_hid[element] = []
   }
   var task = {}
-  for (outer_index = 0; outer_index < project_batches.length; outer_index++) {
+  for (let outer_index = 0; outer_index < project_batches.length; outer_index++) {
     let batch_of_projects = JSON.parse(project_batches[outer_index].getContentText());
     //Logger.log(batch_of_projects);
-    for (index = 0; index < batch_of_projects.length; index++) {
+    for (let index = 0; index < batch_of_projects.length; index++) {
       let project = batch_of_projects[index];
-      for (task_index = 0; task_index < project["tasks"].length; task_index++) {
+      for (let task_index = 0; task_index < project["tasks"].length; task_index++) {
         task = project["tasks"][task_index]
         if (task["name"] in projects_by_hid && !projects_by_hid[task["name"]].map(x => (x["project"] == project["id"])).some(x => x)) {
           projects_by_hid[task["name"]].push({
@@ -162,21 +162,24 @@ function getHIDs() {
   for (var i = 1; i < values.length; i++) {
     hid_array.push(Math.trunc(values[i][1]).toString())
   }
-  Logger.log(hid_array);
+  //Logger.log(hid_array);
   return hid_array;
 }
 
-function domainToIds() {
-  let hid_array = []
+function domainToIds(domains) {
+  if (typeof domains === 'string' || domains instanceof String) {
+    domains = [domains]
+  }
+  domains = domains.map(x => x.toLowerCase());
   let ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName("customers");
   let range = sheet.getDataRange();
   let values = range.getValues();
   let domain_map = {}
   for (var i = 1; i < values.length; i++) {
-    let domains = values[i][0].replace(";", ",").split(",")
-    for (let j = 0; j < domains.length; j++) {
-      let domain = domains[j].trim();
+    let all_domains = values[i][0].replace(";", ",").toLowerCase().split(",")
+    for (let j = 0; j < all_domains.length; j++) {
+      let domain = all_domains[j].trim();
       domain_map[domain] = {
         client_id: values[i][3],
         project_id: values[i][4],
@@ -184,7 +187,28 @@ function domainToIds() {
       }
     }
   }
-  return domain_map;
+  let matched_client = "";
+  let matched_project = "";
+  let matched_task = "";
+  let matching_success = false;
+  for (let domain of domains) {
+    if (domain_map[domain]) {
+      if (!matching_success) {
+        matched_client = domain_map[domain]["client_id"]
+        matched_project = domain_map[domain]["project_id"]
+        matched_task = domain_map[domain]["task_id"]
+        matching_success = true;
+      } else if (domain_map[domain]["project_id"] != matched_project) {
+        matching_success = false;
+        break;
+      }
+    }
+  }
+  if (matching_success && matched_project != "" && matched_task != "") {
+    return [matched_client, matched_project, matched_task]
+  } else {
+    return [null, null, null]
+  }
 }
 
 function getConfig() {
@@ -240,29 +264,11 @@ function writeRecentSentEmail() {
                 recipient_domains.push(recipient_domain);
               }
             }
-            //Logger.log(recipient_domains)
-            let matched_client = undefined;
-            let matched_project = undefined;
-            let matched_task = undefined;
-            let domain_map = domainToIds();
-            let matching_success = false;
-            for (domain of recipient_domains) {
-              if (domain_map[domain]) {
-                if (!matching_success) {
-                  matched_client = domain_map[domain]["client_id"]
-                  matched_project = domain_map[domain]["project_id"]
-                  matched_task = domain_map[domain]["task_id"]
-                  matching_success = true;
-                } else if (domain_map[domain]["project_id"] != matched_project) {
-                  matching_success = false;
-                  break;
-                }
-              }
-            }
-            if (matching_success) {
+            let matchedIds = domainToIds(recipient_domains)
+            if (matchedIds[1]) {
               //Logger.log(domain_map[domain])
               //Logger.log(matched_client)
-              sheet.appendRow([message_date.getTime(), sanitize(message_subject.toLowerCase()), recipient_domains.join(";"), matched_client, matched_project, matched_task]);
+              sheet.appendRow([message_date.getTime(), sanitize(message_subject.toLowerCase()), recipient_domains.join(";"), matchedIds[0], matchedIds[1], matchedIds[2]]);
             }
           }
         }
@@ -279,7 +285,7 @@ function writeRecentMeetings() {
   let ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName("customer_meetings");
   sheet.clear();
-  sheet.appendRow(["start_timestamp", "end_timestamp", "event_summary", "recipient_domains"]);
+  sheet.appendRow(["start_timestamp", "end_timestamp", "event_summary", "recipient_domains", "client_id", "project_id", "task_id"]);
   let calendarId = 'primary';
   let now = new Date();
   let now_minus_one_day = new Date(now.getTime() - (config_map["hours"] * 60 * 60 * 1000));
@@ -312,13 +318,10 @@ function writeRecentMeetings() {
             }
           }
         }
-        if (event_domains.length == 0) {
-          log_event = false
-        }
-        if (log_event) {
+        if (matchedIds[1] && log_event) {
           let event_start = Date.parse(event.start.dateTime);
           let event_end = Date.parse(event.end.dateTime);
-          sheet.appendRow([event_start, event_end, sanitize(event.summary.toLowerCase()), event_domains.join(";")]);
+          sheet.appendRow([event_start, event_end, sanitize(event.summary.toLowerCase()), event_domains.join(";"), matchedIds[0], matchedIds[1], matchedIds[2]]);
         }
       }
     }
@@ -331,17 +334,16 @@ function writeRecentMeetings() {
 
 
 //TODO this needs new logic
-
-function jsonResponse(response) {
-  return JSON.parse(response.getContentText());
-}
-
 common_projects = {}
 common_tags = {}
 
 //////
 // Utility functions
 //////
+
+function jsonResponse(response) {
+  return JSON.parse(response.getContentText());
+}
 
 function get_intervals(minus_x_hours = 96) {
   let lower_bound = Math.floor(Date.now() - minus_x_hours * 60 * 60 * 1000);
@@ -358,7 +360,7 @@ function get_intervals(minus_x_hours = 96) {
     let url = "https://hubspot.clockify.me/api/v1/workspaces/" + config_map["workspace_id"] + "/user/" + config_map["user_id"] + "/time-entries?page-size=" + page_size
     let r = UrlFetchApp.fetch(url, { headers: headers });
     my_time_entries = jsonResponse(r);
-    for (time_entry of my_time_entries) {
+    for (let time_entry of my_time_entries) {
       //Logger.log(time_entry)
       //assert time_entry["timeInterval"]["start"][-1] == "Z";
       time_start = Date.parse(time_entry["timeInterval"]["start"]);
@@ -375,32 +377,6 @@ function get_intervals(minus_x_hours = 96) {
   //Logger.log(intervals);
   return intervals;
 }
-
-/**
- * No longer needed I think
-function map_domain(domain) {
-    try {
-        row = domain_dict[domain];
-        return [row["project_id"], row["tag_id"], row["customer_alias"]];
-    } catch (KeyError) {
-        console.log(domain + " not found in customer_data");
-        return [null, null, null];
-    }
-}
- 
-function map_domain_csv(domain_csv="") {
-    domains = domain_csv.split(";");
-    Logger.log(domains.length)
-    for (domain of domains) {
-      Logger.log(domain)
-        [project, tag, customer_alias] = map_domain(domain);
-        if (project && tag) {
-            return project, tag, customer_alias;
-        }
-    }
-    return null, null, null;
-}
- */
 
 function sanitize(description = "lóL?") {
   description = description.replace(/[^a-zA-Z0-9]/g, " ");
