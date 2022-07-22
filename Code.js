@@ -519,7 +519,7 @@ function log_meetings(silent = false, prep_time_max = 0, post_time_max = 0) {
       "project": values[i][5],
       "event_summary": values[i][2],
       "hid": values[i][7],
-      "task_id" values[i][6]
+      "task_id": values[i][6]
     }
     if (row["project"] && row["project"] != "") {
       var from_timestamp = effective_meeting_times(row['start_timestamp'], row['end_timestamp'])[0];
@@ -570,7 +570,7 @@ function log_email(silent = false) {
       "project": values[i][4],
       "subject": values[i][1],
       "hid": values[i][6],
-      "task_id" values[i][5]
+      "task_id": values[i][5]
     }
     if (row["project"] && row["project"] != "") {
       var from_timestamp, to_timestamp = effective_email_times(row['send_timestamp']);
