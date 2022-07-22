@@ -470,8 +470,8 @@ function effective_email_times(send_timestamp) {
     }
   }
   upper_bound = Math.min(upper_bound, send_timestamp);
+  lower_bound = upper_bound - max_email_minutes * 60 * 1000;
   for (var i = 0; i < logged_intervals.length; i++) {
-    lower_bound = upper_bound - max_email_minutes * 60 * 1000;
     if (logged_intervals[i][0] < upper_bound && logged_intervals[i][1] > lower_bound) {
       lower_bound = logged_intervals[i][1];
     }
