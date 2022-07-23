@@ -14,24 +14,20 @@
 //////
 
 let config_map = getConfig()
+let r = jsonResponse(UrlFetchApp.fetch("https://hubspot.clockify.me/api/v1/user", { 'headers': { 'x-api-key': config_map["clockify_key"] } }));
+config_map["user_id"] = r["id"];
+config_map["workspace_id"] = r["defaultWorkspace"];
 
 const common_tags = {
   "call": "624bb7efa5b26c4f53265358",
   "prep_followup": "624bb7d9a5b26c4f53265352",
 }
 
+let logged_intervals = get_intervals(config_map["hours"])
 
-let logged_intervals = get_intervals(config_map["hours"] + 4)
-
-let headers = { 'x-api-key': config_map["clockify_key"] }
-
-let response = jsonResponse(UrlFetchApp.fetch("https://hubspot.clockify.me/api/v1/user", { headers: headers }));
-config_map["user_id"] = response["id"];
-config_map["workspace_id"] = response["defaultWorkspace"];
-
+//TODO add these to config_map or somewhere else instead
 let min_adjusted_meeting_length = 0.5 // fraction
 let max_meeting_start_delay = 0.33 // fraction
-
 let max_email_minutes = 15 // minutes
 let min_email_minutes = 5 // minutes
 let max_email_overlap = 3 // minutes, should be smaller than min_email_minutes
@@ -90,8 +86,9 @@ function getConfig() {
     config_map[values[i][0]] = values[i][1];
   }
   if (config_map.hasOwnProperty("autoresponder_subject_strings")) {
-    config_map["autoresponder_subject_strings"] = config_map["autoresponder_subject_strings"].replace(";",",").split(",").map(x => x.trim().toLowerCase())
+    config_map["autoresponder_subject_strings"] = config_map["autoresponder_subject_strings"].replace(";", ",").split(",").map(x => x.trim().toLowerCase())
   }
+  Logger.log(config_map)
   return config_map
 }
 
@@ -388,7 +385,7 @@ function get_intervals(minus_x_hours = 96) {
   while (page_size < 1000 && completed == false) {
     page_size += 50;
     let url = "https://hubspot.clockify.me/api/v1/workspaces/" + config_map["workspace_id"] + "/user/" + config_map["user_id"] + "/time-entries?page-size=" + page_size
-    let r = UrlFetchApp.fetch(url, { headers: headers });
+    let r = UrlFetchApp.fetch(url, { 'headers': { 'x-api-key': config_map["clockify_key"] } });
     my_time_entries = jsonResponse(r);
     for (let time_entry of my_time_entries) {
       time_start = Date.parse(time_entry["timeInterval"]["start"]);
@@ -428,7 +425,7 @@ function log_activity(from_timestamp, to_timestamp, description, project_id, tag
     'method': 'post',
     'contentType': 'application/json',
     'payload': JSON.stringify(data),
-    'headers': headers
+    'headers': { 'x-api-key': config_map["clockify_key"] }
   };
   let response = UrlFetchApp.fetch("https://hubspot.clockify.me/api/v1/workspaces/" + config_map["workspace_id"] + "/time-entries", options);
   if (response.getResponseCode() == 201) {
