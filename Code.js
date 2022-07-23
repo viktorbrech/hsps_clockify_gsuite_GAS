@@ -89,7 +89,7 @@ function getConfig() {
   for (var i = 0; i < values.length; i++) {
     config_map[values[i][0]] = values[i][1];
   }
-  if config_map.hasOwnProperty("autoresponder_subject_strings") {
+  if (config_map.hasOwnProperty("autoresponder_subject_strings")) {
     config_map["autoresponder_subject_strings"] = config_map["autoresponder_subject_strings"].replace(";",",").split(",").map(x => x.trim().toLowerCase())
   }
   return config_map
