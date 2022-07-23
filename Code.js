@@ -12,8 +12,11 @@ let config_map = getConfig()
 
 const common_tags = {
   "call": "624bb7efa5b26c4f53265358",
-  "prep_followup": "624bb7d9a5b26c4f53265352", 
+  "prep_followup": "624bb7d9a5b26c4f53265352",
 }
+
+
+let logged_intervals = get_intervals(config_map["hours"] + 4)
 
 let headers = { 'x-api-key': config_map["clockify_key"] }
 
@@ -495,20 +498,7 @@ function effective_email_times(send_timestamp) {
   }
 }
 
-//////
-// Read customer data from HubDB
-//////
 
-let domain_dict = {}
-let customer_dict = {}
-
-
-//////
-// data loading
-//////
-
-let logged_intervals = get_intervals(36)
-let engagements = {}
 
 //////
 // external interface
@@ -572,7 +562,7 @@ function log_meetings(silent = false, prep_time_max = 0, post_time_max = 0) {
 function log_email(silent = false) {
   // TODO truncate subject line when logging activity
   let ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName("customer_meetings");
+  let sheet = ss.getSheetByName("email_sent");
   let range = sheet.getDataRange();
   let values = range.getValues();
   // TODO, exclude meetings everybody but yourself have declined (optional?)
@@ -585,15 +575,14 @@ function log_email(silent = false) {
       "task_id": values[i][5]
     }
     if (row["project"] && row["project"] != "") {
-      let from_timestamp, to_timestamp;
-      [from_timestamp, to_timestamp] = effective_email_times(row['send_timestamp']);
-      if (from_timestamp && to_timestamp && row['project'] && row['tag']) {
-        var r = log_activity(from_timestamp, to_timestamp, "EMAIL " + row['subject'], row['project'], [common_tags["prep_followup"]], true, row['task_id']);
+      let effective_times = effective_email_times(row['send_timestamp']);
+      if (effective_times[0] && effective_times[1] && row['project']) {
+        var r = log_activity(effective_times[0], effective_times[1], "EMAIL " + row['subject'], row['project'], [common_tags["prep_followup"]], true, row['task_id']);
         if (r) {
           if (!silent) {
-            console.log("Logged email (" + Math.round((to_timestamp - from_timestamp) / (1000 * 60)) + "min) " + "\"" + row['subject'] + "\" to " + row['hid'].toString());
+            console.log("Logged email (" + Math.round((effective_times[1] - effective_times[0]) / (1000 * 60)) + "min) " + "\"" + row['subject'] + "\" to " + row['hid'].toString());
           }
-          logged_intervals.push([from_timestamp, to_timestamp]);
+          logged_intervals.push([effective_times[0], effective_times[1]]);
         } else {
           console.log("FAILED to log email \"" + row['subject'] + "\" to " + row['hid'].toString());
         }
