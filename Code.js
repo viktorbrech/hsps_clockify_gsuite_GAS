@@ -8,6 +8,11 @@
  * This is basically adapted from the v1 GAS code, intended to work with a GAS-translated version of the original Python code below
  */
 
+
+//////
+// Globals
+//////
+
 let config_map = getConfig()
 
 const common_tags = {
@@ -30,6 +35,10 @@ let max_meeting_start_delay = 0.33 // fraction
 let max_email_minutes = 15 // minutes
 let min_email_minutes = 5 // minutes
 let max_email_overlap = 3 // minutes, should be smaller than min_email_minutes
+
+//////
+// GAS events and UI elements and wrapped functions
+//////
 
 function onOpen() {
   var spreadsheet = SpreadsheetApp.getActive();
@@ -65,6 +74,24 @@ function enrich_customers() {
   matchCustomerProjects(matched_projects);
 }
 
+//////
+// Sheet interaction functions (GAS v1)
+//////
+
+function getConfig() {
+  let config_map = {}
+  let ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName("config");
+  // This represents ALL the data
+  var range = sheet.getDataRange();
+  var values = range.getValues();
+  // This logs the spreadsheet in CSV format with a trailing comma
+  for (var i = 0; i < values.length; i++) {
+    config_map[values[i][0]] = values[i][1];
+  }
+  return config_map
+}
+
 function getServices() {
   var project_requests = []
   for (var i = 0; i < 5; i++) {
@@ -83,7 +110,6 @@ function getServices() {
   var task = {}
   for (let outer_index = 0; outer_index < project_batches.length; outer_index++) {
     let batch_of_projects = JSON.parse(project_batches[outer_index].getContentText());
-    //Logger.log(batch_of_projects);
     for (let index = 0; index < batch_of_projects.length; index++) {
       let project = batch_of_projects[index];
       for (let task_index = 0; task_index < project["tasks"].length; task_index++) {
@@ -177,7 +203,6 @@ function getHIDs() {
   for (var i = 1; i < values.length; i++) {
     hid_array.push(Math.trunc(values[i][1]).toString())
   }
-  //Logger.log(hid_array);
   return hid_array;
 }
 
@@ -228,22 +253,8 @@ function domainToIds(domains) {
   if (matching_success && matched_project != "" && matched_task != "") {
     return [matched_client, matched_project, matched_task, matched_hid, matched_domains.join(";")]
   } else {
-    return [null, null, null, null]
+    return [null, null, null, null, null]
   }
-}
-
-function getConfig() {
-  let config_map = {}
-  let ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName("config");
-  // This represents ALL the data
-  var range = sheet.getDataRange();
-  var values = range.getValues();
-  // This logs the spreadsheet in CSV format with a trailing comma
-  for (var i = 0; i < values.length; i++) {
-    config_map[values[i][0]] = values[i][1];
-  }
-  return config_map
 }
 
 function extractEmailAddresses(string) {
@@ -256,7 +267,6 @@ function extractEmailAddresses(string) {
 
 function writeRecentSentEmail() {
   // https://developers.google.com/apps-script/reference/gmail
-  //getConfig();
   let ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName("email_sent");
   sheet.clear();
@@ -271,7 +281,6 @@ function writeRecentSentEmail() {
           let message_subject = messages[j].getSubject()
           //TODO make the following exclusion strings part of the config sheet
           if (message_subject && !message_subject.includes("out of office") && !message_subject.includes("slow to respond")) {
-            //Logger.log(message_subject)
             let message_recipients = messages[j].getTo();
             let message_cc = messages[j].getCc();
             if (message_cc.length > 0) {
@@ -287,8 +296,6 @@ function writeRecentSentEmail() {
             }
             let matchedIds = domainToIds(recipient_domains)
             if (matchedIds[1]) {
-              //Logger.log(domain_map[domain])
-              //Logger.log(matched_client)
               sheet.appendRow([message_date.getTime(), sanitize(message_subject.toLowerCase()), recipient_domains.join(";"), matchedIds[0], matchedIds[1], matchedIds[2], matchedIds[3], matchedIds[4]]);
             }
           }
@@ -302,7 +309,6 @@ function writeRecentMeetings() {
   // https://developers.google.com/apps-script/guides/services/advanced
   // https://developers.google.com/calendar/api/v3/reference/events 
   // unfortunately couldn't use https://developers.google.com/apps-script/reference/calendar/calendar-app since it doesn't return "decline" status for an event owner
-  //getConfig();
   let ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName("customer_meetings");
   sheet.clear();
@@ -326,13 +332,13 @@ function writeRecentMeetings() {
         if (event.attendees && event.attendees.length > 0) {
           for (var k = 0; k < event.attendees.length; k++) {
             let attendee = event.attendees[k]
-            //Logger.log(attendee.email);
             if (attendee.self) {
               if (attendee.responseStatus == "declined") {
                 log_event = false;
               }
             } else {
               let attendee_domain = attendee.email.split("@")[1]
+              //TODO also include internal meetings
               if (!event_domains.includes(attendee_domain) && attendee_domain != "hubspot.com" && attendee_domain != "gmail.com" && !attendee_domain.includes("google.com")) {
                 event_domains.push(attendee_domain);
               }
@@ -355,7 +361,7 @@ function writeRecentMeetings() {
  */
 
 //////
-// Utility functions
+// Utility functions (v2)
 //////
 
 function jsonResponse(response) {
@@ -364,11 +370,9 @@ function jsonResponse(response) {
 
 function get_intervals(minus_x_hours = 96) {
   let lower_bound = Math.floor(Date.now() - minus_x_hours * 60 * 60 * 1000);
-  //Logger.log(lower_bound)
   var newDate = new Date();
   newDate.setTime(lower_bound);
   dateString = newDate.toUTCString();
-  //Logger.log(dateString)
   let page_size = 0;
   let completed = false;
   let intervals = [];
@@ -378,11 +382,8 @@ function get_intervals(minus_x_hours = 96) {
     let r = UrlFetchApp.fetch(url, { headers: headers });
     my_time_entries = jsonResponse(r);
     for (let time_entry of my_time_entries) {
-      //Logger.log(time_entry)
-      //assert time_entry["timeInterval"]["start"][-1] == "Z";
       time_start = Date.parse(time_entry["timeInterval"]["start"]);
       time_end = Date.parse(time_entry["timeInterval"]["end"]);
-      //Logger.log(time_end-time_start)
       if (time_end > lower_bound) {
         intervals.push([time_start, time_end]);
       } else {
@@ -391,7 +392,6 @@ function get_intervals(minus_x_hours = 96) {
       }
     }
   }
-  //Logger.log(intervals);
   return intervals;
 }
 
@@ -402,8 +402,6 @@ function sanitize(description) {
   }
   return description.trim();
 }
-
-// section 2
 
 function log_activity(from_timestamp, to_timestamp, description, project_id, tag_list, billable, task_id) {
   let from_isoZ = new Date(from_timestamp).toISOString();
@@ -498,10 +496,8 @@ function effective_email_times(send_timestamp) {
   }
 }
 
-
-
 //////
-// external interface
+// main interface (v2)
 //////
 
 function log_meetings(silent = false, prep_time_max = 0, post_time_max = 0) {
@@ -510,8 +506,8 @@ function log_meetings(silent = false, prep_time_max = 0, post_time_max = 0) {
   let range = sheet.getDataRange();
   let values = range.getValues();
 
-
-  // TODO in GAS, exclude meetings everybody but yourself have declined (optional?)
+  // TODO exclude meetings everybody but yourself have declined (optional?)
+  // TODO also include internal meetings
   for (var i = 1; i < values.length; i++) {
     var row = {
       "start_timestamp": values[i][0],
@@ -528,7 +524,7 @@ function log_meetings(silent = false, prep_time_max = 0, post_time_max = 0) {
         var r = log_activity(from_timestamp, to_timestamp, "CALL " + row['event_summary'], row['project'], [common_tags["call"]], true, row['task_id']);
         if (r) {
           if (!silent) {
-            console.log("Logged call (" + Math.round((to_timestamp - from_timestamp) / (1000 * 60)) + "min) " + "\"" + row['event_summary'] + "\" to " + row['hid'].toString());
+            Logger.log("Logged call (" + Math.round((to_timestamp - from_timestamp) / (1000 * 60)) + "min) " + "\"" + row['event_summary'] + "\" to " + row['hid'].toString());
           }
           logged_intervals.push([from_timestamp, to_timestamp]);
           // prep_call_time
@@ -537,7 +533,7 @@ function log_meetings(silent = false, prep_time_max = 0, post_time_max = 0) {
           if (prep_to == from_timestamp && (prep_to - prep_from) / (1000 * 60) > prep_time_max / 2) {
             r = log_activity(prep_from, prep_to, "call_PREP " + row['event_summary'], row['project'], [common_tags["prep_followup"]], true, row['task_id']);
             if (!r) {
-              console.log("failed to log call_prep for " + row['hid'].toString());
+              Logger.log("failed to log call_prep for " + row['hid'].toString());
             }
           }
           // post_call_time
@@ -546,14 +542,14 @@ function log_meetings(silent = false, prep_time_max = 0, post_time_max = 0) {
           if (post_from == to_timestamp && (post_to - post_from) / (1000 * 60) > post_time_max / 2) {
             r = log_activity(post_from, post_to, "call_POST " + row['event_summary'], row['project'], [common_tags["prep_followup"]], true, row['task_id']);
             if (!r) {
-              console.log("failed to log post_call for " + row['hid'].toString());
+              Logger.log("failed to log post_call for " + row['hid'].toString());
             }
           }
         } else {
-          console.log("FAILED to log call \"" + row['event_summary'] + "\" to " + row['hid'].toString());
+          Logger.log("FAILED to log call \"" + row['event_summary'] + "\" to " + row['hid'].toString());
         }
       } else {
-        console.log("Cannot log call \"" + row['event_summary'] + "\" to " + row['hid'].toString() + " (coincides with logged activity)");
+        Logger.log("Cannot log call \"" + row['event_summary'] + "\" to " + row['hid'].toString() + " (coincides with logged activity)");
       }
     }
   }
@@ -580,14 +576,14 @@ function log_email(silent = false) {
         var r = log_activity(effective_times[0], effective_times[1], "EMAIL " + row['subject'], row['project'], [common_tags["prep_followup"]], true, row['task_id']);
         if (r) {
           if (!silent) {
-            console.log("Logged email (" + Math.round((effective_times[1] - effective_times[0]) / (1000 * 60)) + "min) " + "\"" + row['subject'] + "\" to " + row['hid'].toString());
+            Logger.log("Logged email (" + Math.round((effective_times[1] - effective_times[0]) / (1000 * 60)) + "min) " + "\"" + row['subject'] + "\" to " + row['hid'].toString());
           }
           logged_intervals.push([effective_times[0], effective_times[1]]);
         } else {
-          console.log("FAILED to log email \"" + row['subject'] + "\" to " + row['hid'].toString());
+          Logger.log("FAILED to log email \"" + row['subject'] + "\" to " + row['hid'].toString());
         }
       } else {
-        console.log("Cannot log email \"" + row['subject'] + "\" to " + row['hid'].toString() + " (coincides with logged activity)");
+        Logger.log("Cannot log email \"" + row['subject'] + "\" to " + row['hid'].toString() + " (coincides with logged activity)");
       }
     }
   }
