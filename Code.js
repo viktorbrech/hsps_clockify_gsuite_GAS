@@ -89,6 +89,9 @@ function getConfig() {
   for (var i = 0; i < values.length; i++) {
     config_map[values[i][0]] = values[i][1];
   }
+  if config_map.hasOwnProperty("autoresponder_subject_strings") {
+    config_map["autoresponder_subject_strings"] = config_map["autoresponder_subject_strings"].replace(";",",").split(",").map(x => x.trim().toLowerCase())
+  }
   return config_map
 }
 
@@ -280,7 +283,13 @@ function writeRecentSentEmail() {
         if ((Date.now() - message_date) / (1000 * 60 * 60) < config_map["hours"]) {
           let message_subject = messages[j].getSubject()
           //TODO make the following exclusion strings part of the config sheet
-          if (message_subject && !message_subject.includes("out of office") && !message_subject.includes("slow to respond")) {
+          let out_of_office = false;
+          for (let substring of config_map["autoresponder_subject_strings"]) {
+            if (message_subject.toLowerCase().includes(substring)) {
+              out_of_office = true;
+            }
+          }
+          if (message_subject && !out_of_office) {
             let message_recipients = messages[j].getTo();
             let message_cc = messages[j].getCc();
             if (message_cc.length > 0) {
